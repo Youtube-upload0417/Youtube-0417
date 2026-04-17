@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import datetime
+import json
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,8 +13,17 @@ os.environ["STREAMLIT_SERVER_MAX_UPLOAD_SIZE"] = "5000"
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
 
 def get_service():
-    flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', SCOPES)
-    creds = flow.run_local_server(port=0)
+    # --- ここを修正：Secretsから鍵を読み込む ---
+    if "google_auth" in st.secrets:
+        # Secretsに保存したJSON文字列を辞書形式に変換
+        client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
+        flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+    else:
+        # ローカル実行用（一応残しておきます）
+        flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', SCOPES)
+    
+    # Web上ではブラウザで認証を行うため、引数を調整
+    creds = flow.run_local_server(port=0, open_browser=False)
     return build('youtube', 'v3', credentials=creds)
 
 st.set_page_config(page_title="YouTube投稿マネージャー Pro", layout="centered")
@@ -46,10 +56,7 @@ with st.container():
         with col_t:
             t = st.time_input("公開時刻", datetime.time(18, 0))
         
-        # YouTubeが理解できる形式 (ISO 8601) に変換
-        # 日本の時刻(JST)として扱うための簡易的な設定
         dt = datetime.datetime.combine(d, t)
-        # タイムゾーン指定（日本はUTC+9なので、9時間引いてZをつけるか、そのままオフセット指定）
         publish_at_iso = dt.strftime('%Y-%m-%dT%H:%M:%S+09:00')
 
     st.markdown("---")
@@ -75,7 +82,6 @@ if st.button("🚀 YouTubeへ投稿開始"):
             youtube = get_service()
             tags = [t.strip() for t in tag_input.split(",")] if tag_input else []
 
-            # 予約設定がある場合は status を調整
             final_status = "private" if is_scheduled else status_api
             
             body = {
@@ -91,7 +97,6 @@ if st.button("🚀 YouTubeへ投稿開始"):
                 }
             }
 
-            # 予約日時を body に追加
             if is_scheduled:
                 body['status']['publishAt'] = publish_at_iso
 
