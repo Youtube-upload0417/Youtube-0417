@@ -1,53 +1,36 @@
 import streamlit as st
 import json
-from google_auth_oauthlib.flow import Flow
+from google_auth_oauthlib.flow import InstalledAppFlow
 
+# YouTube投稿に必要な権限
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
 
-st.title("🔑 トークン発行画面")
+st.title("🔑 最終解決：トークン手動取得")
 
-# 1. Secrets読み込み
-if "google_auth" not in st.secrets:
-    st.error("Secretsの設定が不足しています。")
-    st.stop()
-
+# Secrets読み込み
 client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
 
-# 2. 【最重要】Google Cloud側の設定に合わせて「/」の有り無しを両方試せるようにします
-# もしこれでもエラーが出る場合は、下のURLの末尾の「/」を消してください
-redirect_uri = "https://my-youtube-tool.streamlit.app/"
+# 【重要】リダイレクトURIを「手動コピー用」に固定します
+# これにより、URLの不一致エラーを物理的に消します
+flow = InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri='http://localhost')
 
-# 3. セッションでFlowを固定（Missing code verifier対策）
-if "auth_flow" not in st.session_state:
-    st.session_state.auth_flow = Flow.from_client_config(
-        client_config, 
-        scopes=SCOPES, 
-        redirect_uri=redirect_uri
-    )
+auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
 
-auth_url, _ = st.session_state.auth_flow.authorization_url(prompt='consent', access_type='offline')
+st.info("1. 下のリンクからGoogleログインしてください。")
+st.markdown(f'[🔴 Googleログインを開始]({auth_url})')
 
-query_params = st.query_params
+st.warning("⚠️ ログイン後、画面が「接続できません」となりますが、それで正解です。その時のアドレスバーの【URL】をまるごと下に貼ってください。")
 
-if "code" not in query_params:
-    st.info("下のボタンからログインしてください。")
-    st.markdown(f'''
-        <a href="{auth_url}" target="_self">
-            <button style="background-color:#FF0000;color:white;border:none;padding:15px 30px;border-radius:10px;cursor:pointer;font-size:16px;">
-                🔴 Googleログインを開始
-            </button>
-        </a>
-    ''', unsafe_allow_html=True)
-else:
-    try:
-        # ここで合言葉を照合
-        st.session_state.auth_flow.fetch_token(code=query_params["code"])
-        creds = st.session_state.auth_flow.credentials
-        
-        st.success("🎉 成功しました！")
-        st.write("この下のJSONをコピーしてSecretsに貼ってください。")
-        st.code(creds.to_json())
-        st.balloons()
-    except Exception as e:
-        st.error(f"認証エラー: {e}")
-        st.write("設定画面(Google Cloud)のURLと、21行目のURLが完全に一致しているか確認してください。")
+# 2. URLを貼り付けて解析する
+url_input = st.text_input("2. 接続不可になった画面の「URL全体」をここに貼り付けてEnter")
+
+if url_input:
+    if "code=" in url_input:
+        code = url_input.split("code=")[1].split("&")[0]
+        try:
+            flow.fetch_token(code=code)
+            creds = flow.credentials
+            st.success("🎉 ついに成功しました！下のJSONをSecretsに貼ってください。")
+            st.code(creds.to_json())
+        except Exception as e:
+            st.error(f"認証エラー: {e}")
