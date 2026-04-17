@@ -13,10 +13,13 @@ os.environ["STREAMLIT_SERVER_MAX_UPLOAD_SIZE"] = "5000"
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
 
 def get_service():
+    # --- 【重要】すでに認証済みの場合は、その情報を再利用する ---
+    if "youtube_creds" in st.session_state:
+        return build('youtube', 'v3', credentials=st.session_state.youtube_creds)
+
     # Streamlit CloudのSecretsから認証情報を取得
     if "google_auth" in st.secrets:
         client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-        # Web環境では redirect_uri を指定して手動コード入力モードにする
         flow = InstalledAppFlow.from_client_config(
             client_config, 
             SCOPES, 
@@ -32,7 +35,7 @@ def get_service():
     # 画面に認証案内を表示
     st.info("🔑 YouTubeへのアクセス許可が必要です")
     st.markdown(f'1. [こちらをクリックしてGoogleログインを完了してください]({auth_url})')
-    st.write("2. 表示されたコードをコピーして下の欄に貼り付けてください。")
+    st.write("2. 表示されたコードをコピーして下の欄に貼り付けてEnterを押してください。")
     
     # ユーザーが認証コードを入力する欄
     auth_code = st.text_input("認証コードを入力してください", key="youtube_auth_code")
@@ -40,7 +43,10 @@ def get_service():
     if auth_code:
         try:
             flow.fetch_token(code=auth_code)
-            return build('youtube', 'v3', credentials=flow.credentials)
+            # --- 【重要】取得した認証情報をセッションに保存する ---
+            st.session_state.youtube_creds = flow.credentials
+            # 認証が完了したので、一度画面をリセットして次の処理（投稿）を動かす
+            st.rerun()
         except Exception as e:
             st.error(f"認証に失敗しました: {e}")
             st.stop()
@@ -101,7 +107,7 @@ if st.button("🚀 YouTubeへ投稿開始"):
                 f.write(thumb_file.read())
 
         try:
-            # 認証プロセス開始（ここで一時停止してユーザー入力を待つ）
+            # ここで get_service() を呼ぶ
             youtube = get_service()
             
             tags = [t.strip() for t in tag_input.split(",")] if tag_input else []
@@ -122,7 +128,6 @@ if st.button("🚀 YouTubeへ投稿開始"):
                 }
             }
 
-            # 予約日時を body に追加
             if is_scheduled:
                 body['status']['publishAt'] = publish_at_iso
 
