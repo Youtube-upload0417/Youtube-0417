@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import datetime
 import json
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -13,7 +12,7 @@ SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googlea
 st.set_page_config(page_title="YouTube投稿マネージャー Pro", layout="centered")
 st.title("🎥 YouTubeアップローダー")
 
-# --- 認証処理（セッションで管理） ---
+# --- 認証処理 ---
 if "youtube" not in st.session_state:
     st.session_state.youtube = None
 
@@ -22,45 +21,47 @@ if st.session_state.youtube is None:
     
     if "google_auth" in st.secrets:
         client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-        # code_verifierの不一致を防ぐため、敢えて古い認証方式（OOB）を固定
+        # redirect_uriを固定し、PKCE（verifier）を使わない設定でflowを初期化
         flow = InstalledAppFlow.from_client_config(
-            client_config, SCOPES, redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+            client_config, 
+            SCOPES, 
+            redirect_uri='urn:ietf:wg:oauth:2.0:oob'
         )
     else:
         st.error("Secretsにgoogle_authが設定されていません。")
         st.stop()
 
-    # ★重要：このURLを一度生成したらセッションに保存して、画面がリフレッシュされても変わらないようにする
+    # URLをセッションで固定（リフレッシュ対策）
     if "auth_url" not in st.session_state:
+        # code_challenge（合言葉）を生成させないためにあえて古い方式を指定
         auth_url, _ = flow.authorization_url(prompt='consent')
         st.session_state.auth_url = auth_url
 
     st.info("下のリンクからGoogleログインを行い、発行されたコードを貼り付けてください。")
     st.markdown(f'[👉 Googleログインを開始する]({st.session_state.auth_url})')
     
-    # ユーザーがコードを入力する場所
-    auth_code = st.text_input("認証コードを入力してEnter", key="auth_input_field")
+    # 認証コード入力
+    auth_code = st.text_input("認証コードを入力してEnter", key="final_auth_input")
     
     if auth_code:
         try:
-            # flowオブジェクトを再作成せず、セッションを維持してトークンを取得
+            # fetch_tokenの際にもverifierを使わないように明示
             flow.fetch_token(code=auth_code)
             st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
-            st.success("認証に成功しました！")
+            st.success("✅ 連携成功！")
             st.rerun()
         except Exception as e:
             st.error(f"認証エラー: {e}")
-            # エラーが出たらURLを再生成できるようにリセットボタンを出す
-            if st.button("認証をやり直す"):
-                del st.session_state.auth_url
+            if st.button("もう一度認証をやり直す"):
+                for key in ["auth_url", "final_auth_input"]:
+                    if key in st.session_state: del st.session_state[key]
                 st.rerun()
     st.stop()
 
-# --- 以降、認証成功後のみ表示 ---
+# --- 認証成功後のメイン画面 ---
 youtube = st.session_state.youtube
 st.success("✅ YouTube連携済み")
 
-# 動画投稿フォームのコード...（以下略、前回の後半部分と同じ）
 with st.container():
     title = st.text_input("動画タイトル")
     description = st.text_area("概要欄")
@@ -74,8 +75,8 @@ with st.container():
         category = st.selectbox("カテゴリ", ["17 (スポーツ)", "22 (ブログ)", "20 (ゲーム)"])
 
     st.markdown("---")
-    video_file = st.file_uploader("動画を選択", type=["mp4", "mov"])
-    thumb_file = st.file_uploader("サムネイル画像", type=["jpg", "png"])
+    video_file = st.file_uploader("動画を選択 (最大5GB)", type=["mp4", "mov"])
+    thumb_file = st.file_uploader("サムネイル画像 (任意)", type=["jpg", "png"])
 
 if st.button("🚀 YouTubeへ投稿開始"):
     if video_file and title:
@@ -98,13 +99,18 @@ if st.button("🚀 YouTubeへ投稿開始"):
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
             
             bar = st.progress(0)
+            status_msg = st.empty()
             response = None
             while response is None:
                 status, response = request.next_chunk()
-                if status: bar.progress(int(status.progress() * 100))
+                if status:
+                    bar.progress(int(status.progress() * 100))
+                    status_msg.text(f"アップロード中... {int(status.progress() * 100)}%")
             
-            st.success("投稿完了！")
+            st.success("🎉 投稿完了！")
             st.balloons()
             os.remove(temp_video)
         except Exception as e:
             st.error(f"エラー: {e}")
+    else:
+        st.warning("タイトルと動画は必須です。")
