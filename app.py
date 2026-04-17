@@ -1,42 +1,31 @@
 import streamlit as st
 import json
-from google_auth_oauthlib.flow import Flow
+from google_auth_oauthlib.flow import InstalledAppFlow
 
+# YouTube投稿に必要な権限
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
 
-st.title("🔑 最終トークン取得")
+st.title("🔑 手動トークン取得（最終手段）")
 
-if "google_auth" not in st.secrets:
-    st.error("Secretsの設定が漏れています")
-    st.stop()
-
-# 認証設定の読み込み
+# Secrets読み込み
 client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-redirect_uri = "https://my-youtube-tool.streamlit.app/"
 
-# この Flow オブジェクトをセッションで固定するのが解決の鍵
-if "auth_flow" not in st.session_state:
-    st.session_state.auth_flow = Flow.from_client_config(
-        client_config, scopes=SCOPES, redirect_uri=redirect_uri
-    )
+# ★リダイレクトURIを「デスクトップアプリ用」に強制変更します（これでエラーが消えます）
+flow = InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri='urn:ietf:wg:oauth:2.0:oob')
 
-query_params = st.query_params
+auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
 
-if "code" not in query_params:
-    # 1. ログインURLを作る（ここで合言葉が生成される）
-    auth_url, _ = st.session_state.auth_flow.authorization_url(prompt='consent', access_type='offline')
-    st.info("下のリンクを【右クリック】して【新しいタブで開く】で進んでください。")
-    st.markdown(f'<a href="{auth_url}" target="_blank">🔴 ここを右クリックして新しいタブで開く</a>', unsafe_allow_html=True)
-else:
-    # 2. 戻ってきたら、セッションに保存しておいた Flow で認証する
+st.info("1. 下のリンクを開いてログインし、表示された「コード」をコピーしてください。")
+st.markdown(f'[🔴 ここをクリックしてログイン]({auth_url})')
+
+# 2. 手動で貼り付け
+code = st.text_input("2. コピーしたコードをここに貼り付けてEnterを押してください")
+
+if code:
     try:
-        st.session_state.auth_flow.fetch_token(code=query_params["code"])
-        creds = st.session_state.auth_flow.credentials
-        st.success("🎉 ついに成功しました！下の文字を全部コピーしてください。")
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        st.success("🎉 成功しました！この文字を全部コピーして Secrets に貼ってください。")
         st.code(creds.to_json())
-        st.balloons()
     except Exception as e:
         st.error(f"エラー: {e}")
-        if st.button("最初からやり直す"):
-            st.query_params.clear()
-            st.rerun()
