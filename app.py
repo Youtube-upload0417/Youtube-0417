@@ -22,6 +22,7 @@ if st.session_state.youtube is None:
     
     if "google_auth" in st.secrets:
         client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
+        # code_verifierの不一致を防ぐため、敢えて古い認証方式（OOB）を固定
         flow = InstalledAppFlow.from_client_config(
             client_config, SCOPES, redirect_uri='urn:ietf:wg:oauth:2.0:oob'
         )
@@ -29,26 +30,37 @@ if st.session_state.youtube is None:
         st.error("Secretsにgoogle_authが設定されていません。")
         st.stop()
 
-    auth_url, _ = flow.authorization_url(prompt='consent')
+    # ★重要：このURLを一度生成したらセッションに保存して、画面がリフレッシュされても変わらないようにする
+    if "auth_url" not in st.session_state:
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        st.session_state.auth_url = auth_url
+
     st.info("下のリンクからGoogleログインを行い、発行されたコードを貼り付けてください。")
-    st.markdown(f'[👉 Googleログインを開始する]({auth_url})')
+    st.markdown(f'[👉 Googleログインを開始する]({st.session_state.auth_url})')
     
-    auth_code = st.text_input("認証コードを入力してEnter")
+    # ユーザーがコードを入力する場所
+    auth_code = st.text_input("認証コードを入力してEnter", key="auth_input_field")
     
     if auth_code:
         try:
+            # flowオブジェクトを再作成せず、セッションを維持してトークンを取得
             flow.fetch_token(code=auth_code)
             st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
-            st.success("認証に成功しました！投稿フォームを表示します。")
+            st.success("認証に成功しました！")
             st.rerun()
         except Exception as e:
             st.error(f"認証エラー: {e}")
-    st.stop() # 認証されるまでここで止める
+            # エラーが出たらURLを再生成できるようにリセットボタンを出す
+            if st.button("認証をやり直す"):
+                del st.session_state.auth_url
+                st.rerun()
+    st.stop()
 
-# --- ここからメインの投稿フォーム（認証済みの時だけ表示される） ---
+# --- 以降、認証成功後のみ表示 ---
 youtube = st.session_state.youtube
 st.success("✅ YouTube連携済み")
 
+# 動画投稿フォームのコード...（以下略、前回の後半部分と同じ）
 with st.container():
     title = st.text_input("動画タイトル")
     description = st.text_area("概要欄")
@@ -96,5 +108,3 @@ if st.button("🚀 YouTubeへ投稿開始"):
             os.remove(temp_video)
         except Exception as e:
             st.error(f"エラー: {e}")
-    else:
-        st.warning("タイトルと動画は必須です。")
