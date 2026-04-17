@@ -48,7 +48,6 @@ if st.session_state.youtube is None:
 youtube = st.session_state.youtube
 st.success("✅ YouTube連携済み")
 
-# フォームを開始
 with st.form("upload_form"):
     title = st.text_input("動画タイトル")
     description = st.text_area("概要欄")
@@ -56,13 +55,11 @@ with st.form("upload_form"):
     
     col1, col2 = st.columns(2)
     with col1:
-        # 公開設定の選択
         status_display = st.selectbox("公開設定", ["限定公開", "非公開", "公開", "予約投稿"])
         status_map = {"限定公開": "unlisted", "非公開": "private", "公開": "public", "予約投稿": "private"}
     with col2:
         category = st.selectbox("カテゴリ", ["17 (スポーツ)", "22 (ブログ)", "20 (ゲーム)", "1 (映画/アニメ)", "10 (音楽)"])
 
-    # 【重要】予約投稿の入力欄（フォームの中に配置）
     publish_at = None
     if status_display == "予約投稿":
         st.info("📅 予約投稿の設定")
@@ -72,12 +69,11 @@ with st.form("upload_form"):
         with t_col:
             t = st.time_input("公開時間", datetime.time(19, 0))
         
-        # 日本時間をUTC（世界標準時）に変換してYouTube形式にする
-        # 日本はUTC+9時間なので、入力から9時間を引いて送ります
         dt = datetime.datetime.combine(d, t)
+        # 日本時間(JST)からUTCに変換
         utc_dt = dt - datetime.timedelta(hours=9)
         publish_at = utc_dt.isoformat() + ".000Z"
-        st.write(f"設定日時 (日本時間): {dt.strftime('%Y-%m-%d %H:%M')}")
+        st.write(f"予約設定時刻 (日本時間): {dt.strftime('%Y-%m-%d %H:%M')}")
 
     st.markdown("---")
     video_file = st.file_uploader("動画を選択 (最大5GB)", type=["mp4", "mov"])
@@ -105,10 +101,37 @@ if submit_button:
                 }
             }
             
-            # 予約投稿がある場合は追加
             if publish_at:
                 body['status']['publishAt'] = publish_at
 
-            # 動画アップロード
             media = MediaFileUpload(temp_video, chunksize=1024*1024*10, resumable=True)
-            request = youtube.videos().insert(part="snippet,status", body=body, media_body
+            # ここでエラーが起きていました。カッコを閉じ、引数を正しく設定しました。
+            request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+            
+            bar = st.progress(0)
+            status_msg = st.empty()
+            response = None
+            while response is None:
+                status, response = request.next_chunk()
+                if status:
+                    bar.progress(int(status.progress() * 100))
+                    status_msg.text(f"動画をアップロード中... {int(status.progress() * 100)}%")
+            
+            video_id = response['id']
+            
+            if thumb_file:
+                status_msg.text("サムネイルを設定中...")
+                temp_thumb = "temp_thumb.png"
+                with open(temp_thumb, "wb") as f:
+                    f.write(thumb_file.read())
+                youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(temp_thumb)).execute()
+                os.remove(temp_thumb)
+
+            st.success(f"🎉 投稿完了！ 動画ID: {video_id}")
+            st.balloons()
+            os.remove(temp_video)
+            
+        except Exception as e:
+            st.error(f"エラー: {e}")
+    else:
+        st.warning("タイトルと動画は必須です。")
