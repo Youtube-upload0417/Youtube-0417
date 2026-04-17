@@ -28,7 +28,7 @@ if "credentials" not in st.session_state:
 if "state" not in st.session_state:
     st.session_state.state = None
 
-# --- Flow生成（毎回新規） ---
+# --- Flow生成 ---
 def create_flow(state=None):
     client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
     return Flow.from_client_config(
@@ -44,13 +44,10 @@ query_params = st.query_params
 if st.session_state.credentials:
     creds = st.session_state.credentials
 
-    # トークン期限切れ対策
+    # トークン更新
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         st.session_state.credentials = creds
-
-    youtube = build("youtube", "v3", credentials=creds)
-    st.success("✅ YouTube連携済み")
 
 else:
     if "code" not in query_params:
@@ -93,6 +90,12 @@ else:
                 st.rerun()
 
             st.stop()
+
+# --- YouTubeオブジェクト生成（重要） ---
+youtube = None
+if st.session_state.credentials:
+    youtube = build("youtube", "v3", credentials=st.session_state.credentials)
+    st.success("✅ YouTube連携済み")
 
 # --- 投稿画面 ---
 title = st.text_input("動画タイトル")
@@ -140,73 +143,78 @@ st.markdown("---")
 video_file = st.file_uploader("動画を選択", type=["mp4", "mov"])
 thumb_file = st.file_uploader("サムネイル画像（任意）", type=["jpg", "png"])
 
+# --- 投稿処理 ---
 if st.button("🚀 YouTubeへ投稿開始"):
-    if video_file and title:
 
-        # --- 安全な一時ファイル ---
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-            tmp.write(video_file.read())
-            temp_video = tmp.name
+    if not youtube:
+        st.warning("先にGoogleログインしてください")
+        st.stop()
 
-        try:
-            body = {
-                'snippet': {
-                    'title': title,
-                    'description': description,
-                    'categoryId': category
-                },
-                'status': {
-                    'privacyStatus': status_map[status_display],
-                    'selfDeclaredMadeForKids': False
-                }
-            }
-
-            if publish_at:
-                body['status']['publishAt'] = publish_at
-
-            media = MediaFileUpload(temp_video, chunksize=1024*1024*10, resumable=True)
-
-            request = youtube.videos().insert(
-                part="snippet,status",
-                body=body,
-                media_body=media
-            )
-
-            bar = st.progress(0)
-            status_msg = st.empty()
-
-            response = None
-            while response is None:
-                status, response = request.next_chunk()
-                if status:
-                    progress = int(status.progress() * 100)
-                    bar.progress(progress)
-                    status_msg.text(f"アップロード中... {progress}%")
-
-            video_id = response['id']
-
-            # --- サムネイル ---
-            if thumb_file:
-                status_msg.text("サムネイル設定中...")
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                    tmp.write(thumb_file.read())
-                    temp_thumb = tmp.name
-
-                youtube.thumbnails().set(
-                    videoId=video_id,
-                    media_body=MediaFileUpload(temp_thumb)
-                ).execute()
-
-                os.remove(temp_thumb)
-
-            st.success(f"🎉 投稿完了！ 動画ID: {video_id}")
-            st.balloons()
-
-            os.remove(temp_video)
-
-        except Exception as e:
-            import traceback
-            st.error(traceback.format_exc())
-
-    else:
+    if not video_file or not title:
         st.warning("タイトルと動画は必須です。")
+        st.stop()
+
+    # 一時ファイル
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        tmp.write(video_file.read())
+        temp_video = tmp.name
+
+    try:
+        body = {
+            'snippet': {
+                'title': title,
+                'description': description,
+                'categoryId': category
+            },
+            'status': {
+                'privacyStatus': status_map[status_display],
+                'selfDeclaredMadeForKids': False
+            }
+        }
+
+        if publish_at:
+            body['status']['publishAt'] = publish_at
+
+        media = MediaFileUpload(temp_video, chunksize=1024*1024*10, resumable=True)
+
+        request = youtube.videos().insert(
+            part="snippet,status",
+            body=body,
+            media_body=media
+        )
+
+        bar = st.progress(0)
+        status_msg = st.empty()
+
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                progress = int(status.progress() * 100)
+                bar.progress(progress)
+                status_msg.text(f"アップロード中... {progress}%")
+
+        video_id = response['id']
+
+        # サムネイル
+        if thumb_file:
+            status_msg.text("サムネイル設定中...")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp.write(thumb_file.read())
+                temp_thumb = tmp.name
+
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(temp_thumb)
+            ).execute()
+
+            os.remove(temp_thumb)
+
+        st.success(f"🎉 投稿完了！ 動画ID: {video_id}")
+        st.balloons()
+
+        os.remove(temp_video)
+
+    except Exception as e:
+        import traceback
+        st.error(traceback.format_exc())
