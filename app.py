@@ -13,27 +13,44 @@ SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googlea
 st.set_page_config(page_title="YouTube投稿マネージャー", layout="centered")
 st.title("🎥 YouTubeアップローダー")
 
-# --- 認証処理（今日始まる前のシンプルな形） ---
+# --- 認証エラーを物理的に防ぐためのキャッシュ設定 ---
+@st.cache_resource
+def get_flow():
+    client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
+    redirect_uri = "https://my-youtube-tool.streamlit.app/"
+    return InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri=redirect_uri)
+
+flow = get_flow()
+
 if "youtube" not in st.session_state:
     st.session_state.youtube = None
 
+# URLパラメータ取得
+query_params = st.query_params
+
 if st.session_state.youtube is None:
-    client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-    redirect_uri = "https://my-youtube-tool.streamlit.app/"
-    flow = InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri=redirect_uri)
-    
-    query_params = st.query_params
     if "code" not in query_params:
+        # ログインURL生成（verifierを固定するために1回だけ実行）
         auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
         st.info("YouTubeと連携してください")
-        st.markdown(f'<a href="{auth_url}" target="_blank">🔴 Googleログイン</a>', unsafe_allow_html=True)
+        st.markdown(f'<a href="{auth_url}" target="_self"><button style="background-color:#FF0000;color:white;border:none;padding:12px 24px;border-radius:5px;cursor:pointer;">🔴 Googleログイン</button></a>', unsafe_allow_html=True)
         st.stop()
     else:
-        flow.fetch_token(code=query_params["code"])
-        st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
-        st.rerun()
+        try:
+            # ここがエラーの場所：キャッシュされたflowを使って一度だけトークンを取得
+            flow.fetch_token(code=query_params["code"])
+            st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
+            st.query_params.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"認証エラーが発生しました。一度URLの末尾を消してやり直してください。")
+            if st.button("ログイン画面に戻る"):
+                st.query_params.clear()
+                st.rerun()
+            st.stop()
 
-# --- メイン画面（予約投稿・サムネイル付き） ---
+# --- 投稿画面（予約投稿・サムネイル対応） ---
+youtube = st.session_state.youtube
 st.success("✅ YouTube連携済み")
 
 title = st.text_input("動画タイトル")
@@ -46,7 +63,6 @@ with col1:
 with col2:
     category = st.selectbox("カテゴリ", ["17 (スポーツ)", "22 (ブログ)", "20 (ゲーム)", "1 (映画/アニメ)"])
 
-# 予約投稿のカレンダー
 publish_at = None
 if status_display == "予約投稿":
     st.markdown("#### 📅 予約投稿の設定")
@@ -56,11 +72,11 @@ if status_display == "予約投稿":
     with t_col:
         t = st.time_input("公開時間", datetime.time(19, 0))
     
-    # 日本時間からUTCへ変換してYouTube形式にする
+    # 日本時間からUTCへ変換
     dt = datetime.datetime.combine(d, t)
     utc_dt = dt - datetime.timedelta(hours=9)
     publish_at = utc_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    st.caption(f"日本時間 {dt.strftime('%Y/%m/%d %H:%M')} に公開予約されます")
+    st.info(f"🇯🇵 日本時間 {dt.strftime('%Y/%m/%d %H:%M')} に公開予約されます")
 
 st.markdown("---")
 video_file = st.file_uploader("動画を選択 (最大5GB)", type=["mp4", "mov"])
@@ -88,7 +104,7 @@ if st.button("🚀 YouTubeへ投稿開始"):
                 body['status']['publishAt'] = publish_at
 
             media = MediaFileUpload(temp_video, chunksize=1024*1024*10, resumable=True)
-            request = st.session_state.youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+            request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
             
             bar = st.progress(0)
             status_msg = st.empty()
@@ -101,19 +117,19 @@ if st.button("🚀 YouTubeへ投稿開始"):
             
             video_id = response['id']
             
-            # サムネイルの処理
+            # サムネイル設定
             if thumb_file:
                 status_msg.text("サムネイルを設定中...")
                 temp_thumb = "temp_thumb.png"
                 with open(temp_thumb, "wb") as f:
                     f.write(thumb_file.read())
-                st.session_state.youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(temp_thumb)).execute()
+                youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(temp_thumb)).execute()
                 os.remove(temp_thumb)
 
             st.success(f"🎉 投稿完了！ 動画ID: {video_id}")
             st.balloons()
             os.remove(temp_video)
         except Exception as e:
-            st.error(f"エラー: {e}")
+            st.error(f"投稿エラー: {e}")
     else:
         st.warning("タイトルと動画は必須です。")
