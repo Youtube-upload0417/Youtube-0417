@@ -13,18 +13,40 @@ os.environ["STREAMLIT_SERVER_MAX_UPLOAD_SIZE"] = "5000"
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
 
 def get_service():
-    # --- ここを修正：Secretsから鍵を読み込む ---
+    # Streamlit CloudのSecretsから認証情報を取得
     if "google_auth" in st.secrets:
-        # Secretsに保存したJSON文字列を辞書形式に変換
         client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-        flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+        # Web環境では redirect_uri を指定して手動コード入力モードにする
+        flow = InstalledAppFlow.from_client_config(
+            client_config, 
+            SCOPES, 
+            redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+        )
     else:
-        # ローカル実行用（一応残しておきます）
+        # ローカル環境用
         flow = InstalledAppFlow.from_client_secrets_file('client_secrets.json', SCOPES)
+
+    # 認証用URLの生成
+    auth_url, _ = flow.authorization_url(prompt='consent')
+
+    # 画面に認証案内を表示
+    st.info("🔑 YouTubeへのアクセス許可が必要です")
+    st.markdown(f'1. [こちらをクリックしてGoogleログインを完了してください]({auth_url})')
+    st.write("2. 表示されたコードをコピーして下の欄に貼り付けてください。")
     
-    # Web上ではブラウザで認証を行うため、引数を調整
-    creds = flow.run_local_server(port=0, open_browser=False)
-    return build('youtube', 'v3', credentials=creds)
+    # ユーザーが認証コードを入力する欄
+    auth_code = st.text_input("認証コードを入力してください", key="youtube_auth_code")
+
+    if auth_code:
+        try:
+            flow.fetch_token(code=auth_code)
+            return build('youtube', 'v3', credentials=flow.credentials)
+        except Exception as e:
+            st.error(f"認証に失敗しました: {e}")
+            st.stop()
+    else:
+        st.warning("認証コードが入力されるまで待機中です...")
+        st.stop()
 
 st.set_page_config(page_title="YouTube投稿マネージャー Pro", layout="centered")
 st.title("🎥 YouTubeアップローダー (公開予約対応)")
@@ -79,9 +101,12 @@ if st.button("🚀 YouTubeへ投稿開始"):
                 f.write(thumb_file.read())
 
         try:
+            # 認証プロセス開始（ここで一時停止してユーザー入力を待つ）
             youtube = get_service()
+            
             tags = [t.strip() for t in tag_input.split(",")] if tag_input else []
 
+            # 予約設定がある場合は status を調整
             final_status = "private" if is_scheduled else status_api
             
             body = {
@@ -97,6 +122,7 @@ if st.button("🚀 YouTubeへ投稿開始"):
                 }
             }
 
+            # 予約日時を body に追加
             if is_scheduled:
                 body['status']['publishAt'] = publish_at_iso
 
