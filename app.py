@@ -16,47 +16,47 @@ st.title("🎥 YouTubeアップローダー")
 if "youtube" not in st.session_state:
     st.session_state.youtube = None
 
+# URLのパラメータ（認証後の戻りコード）を取得
+query_params = st.query_params
+
 if st.session_state.youtube is None:
-    st.subheader("ステップ1: YouTubeと連携する")
-    
     if "google_auth" in st.secrets:
+        # SecretsからJSONを読み込む
         client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-        # redirect_uriを固定し、PKCE（verifier）を使わない設定でflowを初期化
-        flow = InstalledAppFlow.from_client_config(
-            client_config, 
-            SCOPES, 
-            redirect_uri='urn:ietf:wg:oauth:2.0:oob'
-        )
+        # リダイレクトURIを自分のアプリのURLに設定（末尾の/を忘れずに）
+        redirect_uri = "https://my-youtube-tool.streamlit.app/"
+        flow = InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri=redirect_uri)
     else:
-        st.error("Secretsにgoogle_authが設定されていません。")
+        st.error("Secretsにgoogle_authが正しく設定されていません。")
         st.stop()
 
-    # URLをセッションで固定（リフレッシュ対策）
-    if "auth_url" not in st.session_state:
-        # code_challenge（合言葉）を生成させないためにあえて古い方式を指定
-        auth_url, _ = flow.authorization_url(prompt='consent')
-        st.session_state.auth_url = auth_url
-
-    st.info("下のリンクからGoogleログインを行い、発行されたコードを貼り付けてください。")
-    st.markdown(f'[👉 Googleログインを開始する]({st.session_state.auth_url})')
-    
-    # 認証コード入力
-    auth_code = st.text_input("認証コードを入力してEnter", key="final_auth_input")
-    
-    if auth_code:
+    # URLに認証コード("code")が含まれていない場合、ログインボタンを表示
+    if "code" not in query_params:
+        auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+        st.info("ステップ1: YouTubeと連携してください")
+        # リンクをクリックするとGoogleログイン画面へ飛びます
+        st.markdown(f'''
+            <a href="{auth_url}" target="_self">
+                <button style="background-color:#FF0000;color:white;border:none;padding:12px 24px;border-radius:5px;cursor:pointer;font-size:16px;">
+                    🔴 Googleログインを開始する
+                </button>
+            </a>
+            ''', unsafe_allow_html=True)
+        st.stop()
+    else:
+        # URLに含まれる"code"を使ってYouTubeとの通信を開始
         try:
-            # fetch_tokenの際にもverifierを使わないように明示
-            flow.fetch_token(code=auth_code)
+            flow.fetch_token(code=query_params["code"])
             st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
-            st.success("✅ 連携成功！")
+            # URLを綺麗にするためにパラメータをクリアして再起動
+            st.query_params.clear()
             st.rerun()
         except Exception as e:
-            st.error(f"認証エラー: {e}")
-            if st.button("もう一度認証をやり直す"):
-                for key in ["auth_url", "final_auth_input"]:
-                    if key in st.session_state: del st.session_state[key]
+            st.error(f"認証に失敗しました: {e}")
+            if st.button("もう一度やり直す"):
+                st.query_params.clear()
                 st.rerun()
-    st.stop()
+            st.stop()
 
 # --- 認証成功後のメイン画面 ---
 youtube = st.session_state.youtube
