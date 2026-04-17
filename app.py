@@ -12,7 +12,7 @@ SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googlea
 st.set_page_config(page_title="YouTube投稿マネージャー Pro", layout="centered")
 st.title("🎥 YouTubeアップローダー")
 
-# --- 認証フローのキャッシュ化（ここが解決の鍵） ---
+# --- 認証フローのキャッシュ化 ---
 @st.cache_resource
 def get_auth_flow():
     if "google_auth" in st.secrets:
@@ -29,20 +29,15 @@ if "youtube" not in st.session_state:
 # URLパラメータ取得
 query_params = st.query_params
 
+# 認証が必要な場合
 if st.session_state.youtube is None:
-    if flow is None:
-        st.error("Secretsの設定を確認してください。")
-        st.stop()
-
     if "code" not in query_params:
-        # authorization_urlを1回だけ生成するようにし、verifierを固定する
         auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
         st.info("YouTubeと連携してください")
         st.markdown(f'<a href="{auth_url}" target="_self"><button style="background-color:#FF0000;color:white;border:none;padding:12px 24px;border-radius:5px;cursor:pointer;">🔴 Googleログインを開始する</button></a>', unsafe_allow_html=True)
         st.stop()
     else:
         try:
-            # キャッシュされたflowを使ってトークンを取得
             flow.fetch_token(code=query_params["code"])
             st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
             st.query_params.clear()
@@ -55,6 +50,61 @@ if st.session_state.youtube is None:
                 st.rerun()
             st.stop()
 
-# --- 認証成功後のメイン画面 ---
+# --- 認証成功後のメイン画面（ここが表示されるようになります） ---
+youtube = st.session_state.youtube
 st.success("✅ YouTube連携済み")
-# (以下、投稿フォームのコードを続ける)
+
+with st.form("upload_form"):
+    title = st.text_input("動画タイトル")
+    description = st.text_area("概要欄")
+    tag_input = st.text_input("タグ (カンマ区切り)")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        status_display = st.selectbox("公開設定", ["限定公開", "非公開", "公開"])
+        status_map = {"限定公開": "unlisted", "非公開": "private", "公開": "public"}
+    with col2:
+        category = st.selectbox("カテゴリ", ["17 (スポーツ)", "22 (ブログ)", "20 (ゲーム)"])
+
+    st.markdown("---")
+    video_file = st.file_uploader("動画を選択 (最大5GB)", type=["mp4", "mov"])
+    thumb_file = st.file_uploader("サムネイル画像 (任意)", type=["jpg", "png"])
+    
+    submit_button = st.form_submit_button("🚀 YouTubeへ投稿開始")
+
+if submit_button:
+    if video_file and title:
+        temp_video = "temp_video.mp4"
+        with open(temp_video, "wb") as f:
+            f.write(video_file.read())
+        
+        try:
+            body = {
+                'snippet': {
+                    'title': title, 
+                    'description': description, 
+                    'tags': [t.strip() for t in tag_input.split(",")] if tag_input else [],
+                    'categoryId': category.split(' ')[0]
+                },
+                'status': {'privacyStatus': status_map[status_display], 'selfDeclaredMadeForKids': False}
+            }
+            
+            media = MediaFileUpload(temp_video, chunksize=1024*1024*10, resumable=True)
+            request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+            
+            bar = st.progress(0)
+            status_msg = st.empty()
+            response = None
+            while response is None:
+                status, response = request.next_chunk()
+                if status:
+                    bar.progress(int(status.progress() * 100))
+                    status_msg.text(f"アップロード中... {int(status.progress() * 100)}%")
+            
+            st.success("🎉 投稿完了！")
+            st.balloons()
+            os.remove(temp_video)
+        except Exception as e:
+            st.error(f"エラー: {e}")
+    else:
+        st.warning("タイトルと動画は必須です。")
