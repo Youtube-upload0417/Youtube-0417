@@ -12,6 +12,7 @@ SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googlea
 st.set_page_config(page_title="YouTube投稿マネージャー Pro", layout="centered")
 st.title("🎥 YouTubeアップローダー")
 
+# セッションの初期化
 if "youtube" not in st.session_state:
     st.session_state.youtube = None
 
@@ -21,11 +22,11 @@ query_params = st.query_params
 if st.session_state.youtube is None:
     if "google_auth" in st.secrets:
         client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
-        # ★重要: Secretsに登録したURLと完全に一致させる
+        # ★重要: ここを 'urn:ietf:wg:oauth:2.0:oob' にしてはいけません
         redirect_uri = "https://my-youtube-tool.streamlit.app/"
         flow = InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri=redirect_uri)
     else:
-        st.error("Secretsの設定を確認してください。")
+        st.error("Secretsにgoogle_authが設定されていません。")
         st.stop()
 
     if "code" not in query_params:
@@ -41,9 +42,10 @@ if st.session_state.youtube is None:
         st.stop()
     else:
         try:
-            # URLのリダイレクトから直接トークンを取得（ここが安定の鍵）
+            # 認証コードを処理
             flow.fetch_token(code=query_params["code"])
             st.session_state.youtube = build('youtube', 'v3', credentials=flow.credentials)
+            # 成功したらURLをきれいにする
             st.query_params.clear()
             st.rerun()
         except Exception as e:
