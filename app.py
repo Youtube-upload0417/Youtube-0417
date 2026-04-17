@@ -48,40 +48,40 @@ if st.session_state.youtube is None:
 youtube = st.session_state.youtube
 st.success("✅ YouTube連携済み")
 
-with st.form("upload_form"):
-    title = st.text_input("動画タイトル")
-    description = st.text_area("概要欄")
-    tag_input = st.text_input("タグ (カンマ区切り)")
+# 1. まず入力をすべて受け付ける（ボタンの外側）
+title = st.text_input("動画タイトル")
+description = st.text_area("概要欄")
+tag_input = st.text_input("タグ (カンマ区切り)")
+
+col1, col2 = st.columns(2)
+with col1:
+    status_display = st.selectbox("公開設定", ["限定公開", "非公開", "公開", "予約投稿"])
+    status_map = {"限定公開": "unlisted", "非公開": "private", "公開": "public", "予約投稿": "private"}
+with col2:
+    category = st.selectbox("カテゴリ", ["17 (スポーツ)", "22 (ブログ)", "20 (ゲーム)", "1 (映画/アニメ)", "10 (音楽)"])
+
+# 【ここが重要】予約投稿の入力欄は、ボタンの外側に配置する
+publish_at = None
+if status_display == "予約投稿":
+    st.markdown("#### 📅 予約投稿の詳細設定")
+    d_col, t_col = st.columns(2)
+    with d_col:
+        d = st.date_input("公開日", datetime.date.today())
+    with t_col:
+        t = st.time_input("公開時間", datetime.time(19, 0))
     
-    col1, col2 = st.columns(2)
-    with col1:
-        status_display = st.selectbox("公開設定", ["限定公開", "非公開", "公開", "予約投稿"])
-        status_map = {"限定公開": "unlisted", "非公開": "private", "公開": "public", "予約投稿": "private"}
-    with col2:
-        category = st.selectbox("カテゴリ", ["17 (スポーツ)", "22 (ブログ)", "20 (ゲーム)", "1 (映画/アニメ)", "10 (音楽)"])
+    # 日本時間からUTCへ変換 (YouTube APIはUTCが必要)
+    dt = datetime.datetime.combine(d, t)
+    utc_dt = dt - datetime.timedelta(hours=9)
+    publish_at = utc_dt.isoformat() + ".000Z"
+    st.caption(f"YouTubeに送信される予約時間(UTC): {publish_at}")
 
-    publish_at = None
-    if status_display == "予約投稿":
-        st.info("📅 予約投稿の設定")
-        d_col, t_col = st.columns(2)
-        with d_col:
-            d = st.date_input("公開日", datetime.date.today())
-        with t_col:
-            t = st.time_input("公開時間", datetime.time(19, 0))
-        
-        dt = datetime.datetime.combine(d, t)
-        # 日本時間(JST)からUTCに変換
-        utc_dt = dt - datetime.timedelta(hours=9)
-        publish_at = utc_dt.isoformat() + ".000Z"
-        st.write(f"予約設定時刻 (日本時間): {dt.strftime('%Y-%m-%d %H:%M')}")
+st.markdown("---")
+video_file = st.file_uploader("動画を選択 (最大5GB)", type=["mp4", "mov"])
+thumb_file = st.file_uploader("サムネイル画像 (任意)", type=["jpg", "png"])
 
-    st.markdown("---")
-    video_file = st.file_uploader("動画を選択 (最大5GB)", type=["mp4", "mov"])
-    thumb_file = st.file_uploader("サムネイル画像 (任意)", type=["jpg", "png"])
-    
-    submit_button = st.form_submit_button("🚀 YouTubeへ投稿開始")
-
-if submit_button:
+# 2. 最後に投稿ボタンを配置
+if st.button("🚀 YouTubeへ投稿開始"):
     if video_file and title:
         temp_video = "temp_video.mp4"
         with open(temp_video, "wb") as f:
@@ -105,7 +105,6 @@ if submit_button:
                 body['status']['publishAt'] = publish_at
 
             media = MediaFileUpload(temp_video, chunksize=1024*1024*10, resumable=True)
-            # ここでエラーが起きていました。カッコを閉じ、引数を正しく設定しました。
             request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
             
             bar = st.progress(0)
@@ -115,7 +114,7 @@ if submit_button:
                 status, response = request.next_chunk()
                 if status:
                     bar.progress(int(status.progress() * 100))
-                    status_msg.text(f"動画をアップロード中... {int(status.progress() * 100)}%")
+                    status_msg.text(f"動画アップロード中... {int(status.progress() * 100)}%")
             
             video_id = response['id']
             
@@ -132,6 +131,6 @@ if submit_button:
             os.remove(temp_video)
             
         except Exception as e:
-            st.error(f"エラー: {e}")
+            st.error(f"エラー発生: {e}")
     else:
-        st.warning("タイトルと動画は必須です。")
+        st.warning("タイトルと動画ファイルを選択してください。")
