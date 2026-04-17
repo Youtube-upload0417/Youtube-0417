@@ -16,7 +16,7 @@ client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
 
 # 2. 【最重要】Google Cloud側に登録されているはずの正確なURLをここで固定します
 # もしこれでもエラーが出る場合は、下のURLの末尾の「/」を消してください
-redirect_uri = "https://my-youtube-tool.streamlit.app/"
+redirect_uri = "https://my-youtube-tool.streamlit.app"
 
 # 3. 認証フローの作成（セッションで固定してエラー回避）
 if "auth_flow" not in st.session_state:
