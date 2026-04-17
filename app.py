@@ -1,49 +1,42 @@
 import streamlit as st
-import os
 import json
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 
-# 認証設定
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube']
 
-st.title("🔑 トークン取得専用モード")
+st.title("🔑 最終トークン取得")
 
-# Secretsの確認
 if "google_auth" not in st.secrets:
-    st.error("Secrets に 'google_auth' がありません")
+    st.error("Secretsの設定が漏れています")
     st.stop()
 
+# 認証設定の読み込み
 client_config = json.loads(st.secrets["google_auth"]["client_secrets"])
 redirect_uri = "https://my-youtube-tool.streamlit.app/"
-flow = InstalledAppFlow.from_client_config(client_config, SCOPES, redirect_uri=redirect_uri)
 
-# URLパラメータ取得
+# この Flow オブジェクトをセッションで固定するのが解決の鍵
+if "auth_flow" not in st.session_state:
+    st.session_state.auth_flow = Flow.from_client_config(
+        client_config, scopes=SCOPES, redirect_uri=redirect_uri
+    )
+
 query_params = st.query_params
 
 if "code" not in query_params:
-    st.info("下のボタンからログインして、戻ってきたらトークンを表示します。")
-    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-    # target="_self" で同じタブで開く
-    st.markdown(f'<a href="{auth_url}" target="_self"><button style="background-color:#FF0000;color:white;border:none;padding:12px 24px;border-radius:5px;cursor:pointer;">🔴 Googleログインを開始する</button></a>', unsafe_allow_html=True)
+    # 1. ログインURLを作る（ここで合言葉が生成される）
+    auth_url, _ = st.session_state.auth_flow.authorization_url(prompt='consent', access_type='offline')
+    st.info("下のリンクを【右クリック】して【新しいタブで開く】で進んでください。")
+    st.markdown(f'<a href="{auth_url}" target="_blank">🔴 ここを右クリックして新しいタブで開く</a>', unsafe_allow_html=True)
 else:
-    # URLにcodeがある場合、一回だけトークン取得を試みる
+    # 2. 戻ってきたら、セッションに保存しておいた Flow で認証する
     try:
-        # fetch_token を一回だけ実行
-        flow.fetch_token(code=query_params["code"])
-        creds = flow.credentials
-        
-        st.success("🎉 トークンの取得に成功しました！これをコピーして Secrets に貼ってください。")
-        # これを表示してコピーしてもらう
+        st.session_state.auth_flow.fetch_token(code=query_params["code"])
+        creds = st.session_state.auth_flow.credentials
+        st.success("🎉 ついに成功しました！下の文字を全部コピーしてください。")
         st.code(creds.to_json())
-        
-        # パラメータを消してリセットするボタン
-        if st.button("終わったらここを押してURLをきれいにしてください"):
-            st.query_params.clear()
-            st.rerun()
-            
+        st.balloons()
     except Exception as e:
-        st.error(f"エラーが発生しました: {e}")
-        st.write("URLの末尾に古い ?code=... が残っていないか確認し、もう一度最初からやり直してください。")
+        st.error(f"エラー: {e}")
         if st.button("最初からやり直す"):
             st.query_params.clear()
             st.rerun()
